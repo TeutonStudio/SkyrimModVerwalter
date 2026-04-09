@@ -114,8 +114,10 @@ class SymlinkVerwalter:
 
         manifest = {
             "mods_ordner": str(self.umgebung.mod_ordner),
+            "steamapps_ordner": str(self.umgebung.steamapps_ordner),
             "spiel_ordner": str(self.umgebung.spiel_ordner),
             "data_ordner": str(self.umgebung.data_ordner),
+            "plugins_txt": str(self.umgebung.plugins_txt),
             "aktive_mods_reihenfolge": aktive_mods,
             "symlinks": deployment_map,
             "erstellte_symlinks": erstellt,

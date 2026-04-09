@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 from kern.modpack_verwalter import ModPackVerwalter
 from kern.status_speicher import StatusSpeicher
 from kern.symlink_verwalter import SymlinkVerwalter
-from kern.umgebung_verwalter import Umgebung
+from kern.umgebung_verwalter import SKYRIM_ORDNERNAME, Umgebung
 from schnittstelle.modliste_widget import ModItem, ModListe
 from schnittstelle.pfad_dialog import PfadDialog
 
@@ -34,6 +34,7 @@ class VerwalterFenster(QMainWindow):
 
         self.liste = ModListe()
         self.status_label = QLabel("Bereit.")
+        self.label_steamapps_ordner = QLabel()
         self.label_mod_ordner = QLabel()
         self.label_data_ordner = QLabel()
 
@@ -56,6 +57,7 @@ class VerwalterFenster(QMainWindow):
         button_leiste.addWidget(self.button_vernichte)
 
         anzeige = QVBoxLayout()
+        anzeige.addWidget(self.label_steamapps_ordner)
         anzeige.addWidget(self.label_mod_ordner)
         anzeige.addWidget(self.label_data_ordner)
         anzeige.addWidget(self.liste)
@@ -74,11 +76,11 @@ class VerwalterFenster(QMainWindow):
         menue_umgebung = menueleiste.addMenu("Umgebung")
         menue_modpack = menueleiste.addMenu("Modpack")
 
-        action_spielpfad = QAction("Spielpfad", self)
+        action_spielpfad = QAction("Steamapps-Pfad", self)
         action_modpfad = QAction("Modpfad", self)
         action_json_aufraeumen = QAction("JSON aufräumen", self)
 
-        action_spielpfad.triggered.connect(self.dialog_spielpfad)
+        action_spielpfad.triggered.connect(self.dialog_steamappspfad)
         action_modpfad.triggered.connect(self.dialog_modpfad)
         action_json_aufraeumen.triggered.connect(self.json_aufraeumen)
 
@@ -87,11 +89,18 @@ class VerwalterFenster(QMainWindow):
         menue_modpack.addAction(action_json_aufraeumen)
 
     def aktualisiere_pfad_labels(self) -> None:
+        self.label_steamapps_ordner.setText(
+            f"Steamapps-Ordner: {self.umgebung.steamapps_ordner}"
+        )
         self.label_mod_ordner.setText(f"Mods-Ordner: {self.umgebung.mod_ordner}")
         self.label_data_ordner.setText(f"Data-Ordner: {self.umgebung.data_ordner}")
 
-    def dialog_spielpfad(self) -> None:
-        dialog = PfadDialog("Spielpfad ändern", self.umgebung.spiel_ordner, self)
+    def dialog_steamappspfad(self) -> None:
+        dialog = PfadDialog(
+            "Steamapps-Pfad ändern",
+            self.umgebung.steamapps_ordner,
+            self,
+        )
         if not dialog.exec():
             return
 
@@ -100,13 +109,27 @@ class VerwalterFenster(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Ungültiger Pfad",
-                f"Der Spielpfad ist kein gültiger Ordner:\n{neuer_pfad}",
+                f"Der Steamapps-Pfad ist kein gültiger Ordner:\n{neuer_pfad}",
             )
             return
 
-        self.umgebung.spiel_ordner = neuer_pfad
+        abgeleiteter_spielordner = (
+            neuer_pfad / "common" / SKYRIM_ORDNERNAME
+        )
+        if not abgeleiteter_spielordner.exists() or not abgeleiteter_spielordner.is_dir():
+            QMessageBox.warning(
+                self,
+                "Skyrim nicht gefunden",
+                (
+                    "Unter dem Steamapps-Pfad wurde kein Skyrim-SE-Ordner gefunden:\n"
+                    f"{abgeleiteter_spielordner}"
+                ),
+            )
+            return
+
+        self.umgebung.steamapps_ordner = neuer_pfad
         self.aktualisiere_pfad_labels()
-        self.status_label.setText("Spielpfad aktualisiert.")
+        self.status_label.setText("Steamapps-Pfad aktualisiert.")
 
     def dialog_modpfad(self) -> None:
         dialog = PfadDialog("Modpfad ändern", self.umgebung.mod_ordner, self)
