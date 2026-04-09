@@ -72,15 +72,19 @@ class VerwalterFenster(QMainWindow):
     def _baue_menue(self) -> None:
         menueleiste = self.menuBar()
         menue_umgebung = menueleiste.addMenu("Umgebung")
+        menue_modpack = menueleiste.addMenu("Modpack")
 
         action_spielpfad = QAction("Spielpfad", self)
         action_modpfad = QAction("Modpfad", self)
+        action_json_aufraeumen = QAction("JSON aufräumen", self)
 
         action_spielpfad.triggered.connect(self.dialog_spielpfad)
         action_modpfad.triggered.connect(self.dialog_modpfad)
+        action_json_aufraeumen.triggered.connect(self.json_aufraeumen)
 
         menue_umgebung.addAction(action_spielpfad)
         menue_umgebung.addAction(action_modpfad)
+        menue_modpack.addAction(action_json_aufraeumen)
 
     def aktualisiere_pfad_labels(self) -> None:
         self.label_mod_ordner.setText(f"Mods-Ordner: {self.umgebung.mod_ordner}")
@@ -152,8 +156,14 @@ class VerwalterFenster(QMainWindow):
             self.status_label.setText("Keine Mod-Unterordner gefunden.")
             return
 
-        for mod_name, aktiviert in mods:
-            self.liste.addItem(ModItem(mod_name, aktiviert))
+        for eintrag in mods:
+            self.liste.addItem(
+                ModItem(
+                    eintrag.name,
+                    eintrag.aktiviert,
+                    ist_ueberfluessig=eintrag.ist_ueberfluessig,
+                )
+            )
 
         self.liste.blockSignals(False)
         self.speichere_status()
@@ -212,6 +222,37 @@ class VerwalterFenster(QMainWindow):
                 "Undeploy abgeschlossen",
                 ergebnis.detail_text,
             )
+
+    def json_aufraeumen(self) -> None:
+        try:
+            behalten, entfernt = self.modpack.bereinige_status_json()
+        except FileNotFoundError:
+            QMessageBox.warning(
+                self,
+                "Ordner fehlt",
+                f"Der Mods-Ordner wurde nicht gefunden:\n{self.umgebung.mod_ordner}",
+            )
+            return
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "JSON defekt",
+                f"Die Status-JSON konnte nicht bereinigt werden:\n{exc}",
+            )
+            return
+
+        self.aktualisieren()
+        self.status_label.setText(
+            f"Status-JSON bereinigt: {entfernt} Einträge entfernt."
+        )
+        QMessageBox.information(
+            self,
+            "JSON aufgeräumt",
+            (
+                f"{entfernt} überflüssige Einträge entfernt.\n"
+                f"{behalten} Einträge bleiben erhalten."
+            ),
+        )
 
     def closeEvent(self, event) -> None:
         self.speichere_status()

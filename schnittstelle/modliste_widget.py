@@ -4,7 +4,12 @@ from PyQt6.QtWidgets import QListWidget
 
 
 class ModItem(PyQt6.QtWidgets.QListWidgetItem):
-    def __init__(self, name: str, selektiert: bool):
+    def __init__(
+        self,
+        name: str,
+        selektiert: bool,
+        ist_ueberfluessig: bool = False,
+    ):
         super().__init__(name)
         self.setFlags(
             self.flags()
@@ -14,7 +19,13 @@ class ModItem(PyQt6.QtWidgets.QListWidgetItem):
             | Qt.ItemFlag.ItemIsSelectable
             | Qt.ItemFlag.ItemIsEnabled
         )
-        self.setCheckState( Qt.CheckState.Checked if selektiert else Qt.CheckState.Unchecked )
+        self.setCheckState(
+            Qt.CheckState.Checked if selektiert else Qt.CheckState.Unchecked
+        )
+        if ist_ueberfluessig:
+            self.setToolTip(
+                "Überflüssiger JSON-Eintrag: Ordner fehlt oder ist bereits vertreten."
+            )
 
 class ModListe(QListWidget):
     reihenfolge_geaendert = PyQt6.QtCore.pyqtSignal()
