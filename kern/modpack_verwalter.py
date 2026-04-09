@@ -92,7 +92,11 @@ class ModPackVerwalter:
     def sammle_dateien_eines_mods(self, mod_name: str) -> list[Path]:
         mod_pfad = self.umgebung.mod_ordner / mod_name
         return sorted(
-            [pfad for pfad in mod_pfad.rglob("*") if pfad.is_file()],
+            [
+                pfad
+                for pfad in mod_pfad.rglob("*")
+                if pfad.is_file() and pfad.name.lower() != "meta.ini"
+            ],
             key=lambda pfad: str(pfad.relative_to(mod_pfad)).lower(),
         )
 
