@@ -1,4 +1,5 @@
 import PyQt6
+from PyQt6.QtGui import QActionGroup
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QHBoxLayout,
@@ -9,7 +10,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from types import SimpleNamespace
 
+from kern.kopie_verwalter import KopieVerwalter
 from kern.modpack_verwalter import ModPackVerwalter
 from kern.status_speicher import StatusSpeicher
 from kern.symlink_verwalter import SymlinkVerwalter
@@ -28,6 +31,11 @@ class VerwalterFenster(QMainWindow):
             self.umgebung,
             self.status_speicher,
         )
+        self.kopie_verwalter = KopieVerwalter(
+            self.umgebung,
+            self.status_speicher,
+        )
+        self.modding_variante = "symlink"
 
         self.setWindowTitle("Skyrim Mod Verwalter")
         self.resize(PyQt6.QtCore.QSize(900, 600))
@@ -43,13 +51,14 @@ class VerwalterFenster(QMainWindow):
         self.button_vernichte = QPushButton("Vernichte symbolische Modlinks!")
 
         self.button_aktualisieren.clicked.connect(self.aktualisieren)
-        self.button_erzeuge.clicked.connect(self.deploy_symlinks)
-        self.button_vernichte.clicked.connect(self.undeploy_symlinks)
+        self.button_erzeuge.clicked.connect(self.deploy_aktive_variante)
+        self.button_vernichte.clicked.connect(self.undeploy_aktive_variante)
 
         self.liste.reihenfolge_geaendert.connect(self.speichere_status)
         self.liste.itemChanged.connect(self.speichere_status)
 
         self._baue_menue()
+        self.aktualisiere_varianten_ui()
 
         button_leiste = QHBoxLayout()
         button_leiste.addWidget(self.button_aktualisieren)
@@ -75,18 +84,37 @@ class VerwalterFenster(QMainWindow):
         menueleiste = self.menuBar()
         menue_umgebung = menueleiste.addMenu("Umgebung")
         menue_modpack = menueleiste.addMenu("Modpack")
+        menue_variante = menueleiste.addMenu("Modding variante")
 
         action_spielpfad = QAction("Steamapps-Pfad", self)
         action_modpfad = QAction("Modpfad", self)
         action_json_aufraeumen = QAction("JSON aufräumen", self)
+        self.action_symlinks = QAction("Symlinks", self)
+        self.action_kopie = QAction("Kopie", self)
+        self.varianten_gruppe = QActionGroup(self)
 
         action_spielpfad.triggered.connect(self.dialog_steamappspfad)
         action_modpfad.triggered.connect(self.dialog_modpfad)
         action_json_aufraeumen.triggered.connect(self.json_aufraeumen)
+        self.action_symlinks.triggered.connect(
+            lambda checked: self.setze_modding_variante("symlink", checked)
+        )
+        self.action_kopie.triggered.connect(
+            lambda checked: self.setze_modding_variante("kopie", checked)
+        )
+
+        self.varianten_gruppe.setExclusive(True)
+        self.action_symlinks.setCheckable(True)
+        self.action_kopie.setCheckable(True)
+        self.varianten_gruppe.addAction(self.action_symlinks)
+        self.varianten_gruppe.addAction(self.action_kopie)
+        self.action_symlinks.setChecked(True)
 
         menue_umgebung.addAction(action_spielpfad)
         menue_umgebung.addAction(action_modpfad)
         menue_modpack.addAction(action_json_aufraeumen)
+        menue_variante.addAction(self.action_symlinks)
+        menue_variante.addAction(self.action_kopie)
 
     def aktualisiere_pfad_labels(self) -> None:
         self.label_steamapps_ordner.setText(
@@ -192,7 +220,7 @@ class VerwalterFenster(QMainWindow):
         self.speichere_status()
         self.status_label.setText(f"{len(mods)} Mods gefunden.")
 
-    def deploy_symlinks(self) -> None:
+    def deploy_aktive_variante(self) -> None:
         aktive_mods = self.liste.ausgewaehlte_mods_in_reihenfolge()
         if not aktive_mods:
             QMessageBox.information(
@@ -203,21 +231,31 @@ class VerwalterFenster(QMainWindow):
             return
 
         self.speichere_status()
+        self.vernichte_manifest_methode(stumm=True)
         deployment_map, plugins, konflikte = self.modpack.berechne_deployment(
             aktive_mods
         )
-        ergebnis = self.symlink_verwalter.deploy_symlinks(
-            aktive_mods,
-            deployment_map,
-            plugins,
-            konflikte,
-        )
+
+        if self.modding_variante == "kopie":
+            ergebnis = self.kopie_verwalter.deploy_kopien(
+                aktive_mods,
+                deployment_map,
+                plugins,
+                konflikte,
+            )
+        else:
+            ergebnis = self.symlink_verwalter.deploy_symlinks(
+                aktive_mods,
+                deployment_map,
+                plugins,
+                konflikte,
+            )
 
         self.status_label.setText(ergebnis.status_text)
         QMessageBox.information(self, "Deploy abgeschlossen", ergebnis.detail_text)
 
-    def undeploy_symlinks(self, stumm: bool = False) -> None:
-        ergebnis = self.symlink_verwalter.undeploy_symlinks(stumm=stumm)
+    def undeploy_aktive_variante(self, stumm: bool = False) -> None:
+        ergebnis = self.vernichte_manifest_methode(stumm=stumm)
 
         if ergebnis.manifest_fehler is not None:
             if not stumm:
@@ -245,6 +283,50 @@ class VerwalterFenster(QMainWindow):
                 "Undeploy abgeschlossen",
                 ergebnis.detail_text,
             )
+
+    def vernichte_manifest_methode(self, stumm: bool = False):
+        try:
+            manifest = self.status_speicher.lade_manifest()
+        except Exception as exc:
+            return SimpleNamespace(
+                manifest_vorhanden=True,
+                manifest_fehler=str(exc),
+                status_text="",
+                detail_text="",
+            )
+
+        if manifest is None:
+            return SimpleNamespace(
+                manifest_vorhanden=False,
+                manifest_fehler=None,
+                status_text="",
+                detail_text="",
+            )
+
+        methode = manifest.get("methode", "symlink")
+        if methode == "kopie":
+            return self.kopie_verwalter.undeploy_kopien(stumm=stumm)
+        return self.symlink_verwalter.undeploy_symlinks(stumm=stumm)
+
+    def setze_modding_variante(self, variante: str, checked: bool = True) -> None:
+        if not checked or variante == self.modding_variante:
+            return
+
+        self.vernichte_manifest_methode(stumm=True)
+        self.modding_variante = variante
+        self.aktualisiere_varianten_ui()
+        self.status_label.setText(f"Modding-Variante aktiv: {variante}.")
+
+    def aktualisiere_varianten_ui(self) -> None:
+        if self.modding_variante == "kopie":
+            self.action_kopie.setChecked(True)
+            self.button_erzeuge.setText("Erzeuge Modkopien!")
+            self.button_vernichte.setText("Vernichte Modkopien!")
+            return
+
+        self.action_symlinks.setChecked(True)
+        self.button_erzeuge.setText("Erzeuge symbolische Modlinks!")
+        self.button_vernichte.setText("Vernichte symbolische Modlinks!")
 
     def json_aufraeumen(self) -> None:
         try:
@@ -279,5 +361,5 @@ class VerwalterFenster(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self.speichere_status()
-        self.undeploy_symlinks(stumm=True)
+        self.undeploy_aktive_variante(stumm=True)
         event.accept()

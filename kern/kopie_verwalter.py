@@ -1,3 +1,5 @@
+import filecmp
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -8,7 +10,7 @@ from kern.umgebung_verwalter import Umgebung
 @dataclass
 class DeployErgebnis:
     aktive_mods: int
-    erstellte_symlinks: int
+    erstellte_kopien: int
     plugins: int
     konflikte: list[str] = field(default_factory=list)
     fehler: list[str] = field(default_factory=list)
@@ -16,7 +18,7 @@ class DeployErgebnis:
     @property
     def status_text(self) -> str:
         return (
-            f"Deploy fertig: {self.erstellte_symlinks} Symlinks, "
+            f"Deploy fertig: {self.erstellte_kopien} Kopien, "
             f"{self.plugins} Plugins."
         )
 
@@ -25,7 +27,7 @@ class DeployErgebnis:
         meldung = [
             "Deploy abgeschlossen.",
             f"Aktive Mods: {self.aktive_mods}",
-            f"Erstellte Symlinks: {self.erstellte_symlinks}",
+            f"Erstellte Kopien: {self.erstellte_kopien}",
             f"Plugins: {self.plugins}",
             f"Konflikte: {len(self.konflikte)}",
             f"Fehler: {len(self.fehler)}",
@@ -52,16 +54,16 @@ class DeployErgebnis:
 class UndeployErgebnis:
     manifest_vorhanden: bool
     manifest_fehler: str | None = None
-    entfernte_symlinks: int = 0
+    entfernte_kopien: int = 0
     fehler: list[str] = field(default_factory=list)
 
     @property
     def status_text(self) -> str:
-        return f"Undeploy fertig: {self.entfernte_symlinks} Symlinks entfernt."
+        return f"Undeploy fertig: {self.entfernte_kopien} Kopien entfernt."
 
     @property
     def detail_text(self) -> str:
-        text = f"{self.entfernte_symlinks} Symlinks entfernt."
+        text = f"{self.entfernte_kopien} Kopien entfernt."
         if self.fehler:
             text += "\n\nFehler:\n" + "\n".join(self.fehler[:20])
             if len(self.fehler) > 20:
@@ -69,19 +71,19 @@ class UndeployErgebnis:
         return text
 
 
-class SymlinkVerwalter:
+class KopieVerwalter:
     def __init__(self, umgebung: Umgebung, status_speicher: StatusSpeicher):
         self.umgebung = umgebung
         self.status_speicher = status_speicher
 
-    def deploy_symlinks(
+    def deploy_kopien(
         self,
         aktive_mods: list[str],
         deployment_map: dict[str, str],
         plugins: list[str],
         konflikte: list[str],
     ) -> DeployErgebnis:
-        self.undeploy_symlinks(stumm=True)
+        self.undeploy_kopien(stumm=True)
 
         erstellt: list[str] = []
         fehler: list[str] = []
@@ -98,14 +100,14 @@ class SymlinkVerwalter:
                         ziel.unlink()
                     else:
                         fehler.append(
-                            f"Ziel existiert bereits und ist kein Symlink:\n{ziel}"
+                            f"Ziel existiert bereits und ist keine erzeugte Kopie:\n{ziel}"
                         )
                         continue
 
-                ziel.symlink_to(quelle)
+                shutil.copy2(quelle, ziel)
                 erstellt.append(ziel_str)
             except Exception as exc:
-                fehler.append(f"{ziel} -> {quelle}\n{exc}")
+                fehler.append(f"{ziel} <- {quelle}\n{exc}")
 
         try:
             self.schreibe_plugins_txt(plugins)
@@ -113,15 +115,15 @@ class SymlinkVerwalter:
             fehler.append(f"plugins.txt konnte nicht geschrieben werden:\n{exc}")
 
         manifest = {
-            "methode": "symlink",
+            "methode": "kopie",
             "mods_ordner": str(self.umgebung.mod_ordner),
             "steamapps_ordner": str(self.umgebung.steamapps_ordner),
             "spiel_ordner": str(self.umgebung.spiel_ordner),
             "data_ordner": str(self.umgebung.data_ordner),
             "plugins_txt": str(self.umgebung.plugins_txt),
             "aktive_mods_reihenfolge": aktive_mods,
-            "symlinks": deployment_map,
-            "erstellte_symlinks": erstellt,
+            "kopien": deployment_map,
+            "erstellte_kopien": erstellt,
             "plugins": plugins,
             "konflikte": konflikte,
         }
@@ -129,13 +131,13 @@ class SymlinkVerwalter:
 
         return DeployErgebnis(
             aktive_mods=len(aktive_mods),
-            erstellte_symlinks=len(erstellt),
+            erstellte_kopien=len(erstellt),
             plugins=len(plugins),
             konflikte=konflikte,
             fehler=fehler,
         )
 
-    def undeploy_symlinks(self, stumm: bool = False) -> UndeployErgebnis:
+    def undeploy_kopien(self, stumm: bool = False) -> UndeployErgebnis:
         del stumm
 
         try:
@@ -151,13 +153,35 @@ class SymlinkVerwalter:
 
         entfernte = 0
         fehler: list[str] = []
+        deployment_map = manifest.get("kopien", {})
 
-        for ziel_str in manifest.get("erstellte_symlinks", []):
+        for ziel_str in manifest.get("erstellte_kopien", []):
             ziel = Path(ziel_str)
+            quelle_str = deployment_map.get(ziel_str)
+            quelle = Path(quelle_str) if quelle_str else None
+
             try:
                 if ziel.is_symlink():
-                    ziel.unlink()
-                    entfernte += 1
+                    fehler.append(f"{ziel}\nZiel ist ein Symlink statt einer Kopie.")
+                    continue
+                if not ziel.exists():
+                    continue
+                if not ziel.is_file():
+                    fehler.append(f"{ziel}\nZiel ist keine Datei.")
+                    continue
+                if quelle is None or not quelle.exists():
+                    fehler.append(
+                        f"{ziel}\nQuell-Datei für Vergleich fehlt, Kopie bleibt erhalten."
+                    )
+                    continue
+                if not filecmp.cmp(quelle, ziel, shallow=False):
+                    fehler.append(
+                        f"{ziel}\nDatei stimmt nicht mehr mit der ursprünglichen Quelle überein."
+                    )
+                    continue
+
+                ziel.unlink()
+                entfernte += 1
             except Exception as exc:
                 fehler.append(f"{ziel}\n{exc}")
 
@@ -177,7 +201,7 @@ class SymlinkVerwalter:
 
         return UndeployErgebnis(
             manifest_vorhanden=True,
-            entfernte_symlinks=entfernte,
+            entfernte_kopien=entfernte,
             fehler=fehler,
         )
 
